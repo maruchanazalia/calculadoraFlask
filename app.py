@@ -1,47 +1,58 @@
 from flask import Flask, render_template, request, jsonify
 from lark import Lark, Transformer, v_args, Tree
 
-# Define la gramática
 grammar = """
 start: expr
 ?expr: term
      | expr "+" term   -> suma
-     | expr "-" term   -> inicio
+     | expr "-" term   -> resta
 ?term: factor
      | term "*" factor -> multiplicacion
-     | term "/" factor -> divicion
+     | term "/" factor -> division
 ?factor: NUMBER        -> numero
-       | "-" factor    -> resta
+       | "-" factor    -> negativo
        | "(" expr ")"
-%import common.NUMBER
 %import common.WS_INLINE
+%import common.CNAME
+%import common.NUMBER   // Se asegura que "NUMBER" incluye decimales y números científicos
 %ignore WS_INLINE
 """
 
+
 parser = Lark(grammar, parser='lalr')
+
 @v_args(inline=True)
 class CalculateTree(Transformer):
-    def add(self, a, b):
+    def suma(self, a, b):
         return float(a) + float(b)
-    def subtract(self, a, b):
+
+    def resta(self, a, b):
         return float(a) - float(b)
-    def multiply(self, a, b):
+
+    def multiplicacion(self, a, b):
+        print(f"Multiplicación: {a} * {b}")  # Depuración
         return float(a) * float(b)
-    def divide(self, a, b):
+
+    def division(self, a, b):
+        print(f"División: {a} / {b}")  # Depuración
+        if b == 0:
+            return "Error: División por cero"
         return float(a) / float(b)
-    def number(self, n):
+
+    def numero(self, n):
+        print(f"Número: {n}")  # Depuración
         return float(n)
-    def neg(self, n):
+
+    def negativo(self, n):
+        print(f"Negativo: -{n}")  # Depuración
         return -float(n)
-    def start(self, tree):
-        return float(tree)
+
 
 app = Flask(__name__)
 
 @app.route('/')
 def index():
     return render_template('index.html')
-
 @app.route('/calculate', methods=['POST'])
 def calculate():
     try:
@@ -49,23 +60,57 @@ def calculate():
         tree = parser.parse(expression)
         transformer = CalculateTree()
         result = transformer.transform(tree)
-        
+
+        # Asegurarnos de que el resultado es un número (float o int)
         if isinstance(result, (int, float)):
+            result = float(result)  # Convertir a float explícitamente
             return jsonify({
-                "result": str(result),
+                "result": str(result),  # Convertir el resultado a cadena para JSON
                 "success": True
             })
         else:
+            print(f"Error: El resultado no es un número válido. Tipo recibido: {type(result)}")
+            # Intentamos acceder a la raíz del árbol si es necesario
+            if isinstance(result, Tree) and len(result.children) > 0:
+                result = result.children[0]  # Extraemos el primer hijo (el valor)
+                return jsonify({
+                    "result": str(result),
+                    "success": True
+                })
             return jsonify({
                 "error": "El resultado no es un número válido",
                 "success": False
             })
     except Exception as e:
-        print(f"Error en calculate: {str(e)}") 
+        print(f"Error en calculate: {str(e)}")
         return jsonify({
-            "error": str(e),
+            "error": f"Error al procesar la expresión: {str(e)}",
             "success": False
         })
+    
+@app.route('/get_tokens', methods=['POST'])
+def get_tokens():
+    try:
+        expression = request.json['expression']
+        
+        # Analizar los tokens de la expresión
+        tokens = []
+        for token in parser.lex(expression):
+            token_type = "Número entero" if token.type == "NUMBER" else "Operador " + token.type
+            tokens.append({"token": token.value, "tipo": token_type})
+
+        return jsonify({
+            "tokens": tokens,
+            "success": True
+        })
+    except Exception as e:
+        print(f"Error al procesar tokens: {str(e)}")
+        return jsonify({
+            "error": f"Error al procesar la expresión: {str(e)}",
+            "success": False
+        })
+
+
 
 @app.route('/generate_tree', methods=['POST'])
 def generate_tree():
